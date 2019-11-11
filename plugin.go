@@ -2,15 +2,18 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
+	"reflect"
 	"regexp"
 	"strings"
 
 	"github.com/aymerick/raymond"
 	appv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+
 	"k8s.io/client-go/kubernetes/scheme"
 )
 
@@ -96,8 +99,20 @@ func (p Plugin) Exec() error {
 	case *corev1.ConfigMap:
 		log.Print("📦 Resource type: ConfigMap")
 		err = ApplyConfigMapFromFile(clientset, p.KubeConfig.Namespace, o, p.ConfigMapFile)
+	case *corev1.Service:
+		log.Print("📦 Resource type: Service")
+		err = CreateOrUpdateService(clientset, p.KubeConfig.Namespace, o)
+		if err != nil {
+			return err
+		}
+		// Watch for successful update
+		log.Print("📦 Watching service until loan balancer has been assigned.")
+		state, watchErr := waitUntilServiceSettled(clientset, p.KubeConfig.Namespace, o.ObjectMeta.Name, 120)
+		log.Printf("%s", state)
+		return watchErr
 	default:
 		err = errors.New("⛔️ This plugin doesn't support that resource type")
+		err = errors.New(fmt.Sprintf("resource type: %v", reflect.TypeOf(kubernetesObject)))
 		return err
 	}
 	return err
