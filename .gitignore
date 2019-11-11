@@ -1,5 +1,6 @@
 vendor
 build/kubano
+build.dev.sh
 .DS_Store
 .env
 .idea/
