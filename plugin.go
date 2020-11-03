@@ -13,9 +13,9 @@ import (
 	"github.com/aymerick/raymond"
 	appV1 "k8s.io/api/apps/v1"
 	coreV1 "k8s.io/api/core/v1"
-  v1BetaV1 "k8s.io/api/extensions/v1beta1"
+	v1BetaV1 "k8s.io/api/extensions/v1beta1"
 
-  "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/kubernetes/scheme"
 )
 
 type (
@@ -35,19 +35,21 @@ type (
 	}
 )
 
+const defaultNamespace = "default"
+
 // Exec -- Runs plugin
 func (p Plugin) Exec() error {
 	if p.KubeConfig.Server == "" {
-		return errors.New("PLUGIN_SERVER is not defined")
+		return errors.New("PLUGIN_SERVER or settings.server must be defined")
 	}
 	if p.KubeConfig.Token == "" {
-		return errors.New("PLUGIN_TOKEN is not defined")
+		return errors.New("PLUGIN_TOKEN or settings.token must be defined")
 	}
 	if p.KubeConfig.Ca == "" {
-		return errors.New("PLUGIN_CA is not defined")
+		return errors.New("PLUGIN_CA or settings.ca must be defined")
 	}
 	if p.Template == "" {
-		return errors.New("PLUGIN_TEMPLATE, or template must be defined")
+		return errors.New("PLUGIN_TEMPLATE or settings.template must be defined")
 	}
 	// Make map of environment variables set by Drone
 	ctx := make(map[string]string)
@@ -94,12 +96,12 @@ func (p Plugin) Exec() error {
 		return err
 	}
 
+	// Settings namespace takes precedence over template namespace
+	p.KubeConfig.Namespace = getStructFieldStringValueOrDefault(kubernetesObject, "Namespace", defaultNamespace)
+
 	switch o := kubernetesObject.(type) {
 	case *appV1.Deployment:
 		log.Print("📦 Resource type: Deployment")
-		if p.KubeConfig.Namespace == "" {
-			p.KubeConfig.Namespace = o.Namespace
-		}
 
 		err = CreateOrUpdateDeployment(clientset, p.KubeConfig.Namespace, o)
 		if err != nil {
@@ -112,17 +114,11 @@ func (p Plugin) Exec() error {
 		log.Printf("%s", state)
 		return watchErr
 	case *coreV1.ConfigMap:
-		if p.KubeConfig.Namespace == "" {
-			p.KubeConfig.Namespace = o.Namespace
-		}
-
 		log.Print("📦 Resource type: ConfigMap")
+
 		err = ApplyConfigMapFromFile(clientset, p.KubeConfig.Namespace, o, p.ConfigMapFile)
 	case *coreV1.Service:
 		log.Print("📦 Resource type: Service")
-    if p.KubeConfig.Namespace == "" {
-      p.KubeConfig.Namespace = o.Namespace
-    }
 
 		err = CreateOrUpdateService(clientset, p.KubeConfig.Namespace, o)
 		if err != nil {
@@ -134,17 +130,25 @@ func (p Plugin) Exec() error {
 		state, watchErr := waitUntilServiceSettled(clientset, p.KubeConfig.Namespace, o.ObjectMeta.Name, 120)
 		log.Printf("%s", state)
 		return watchErr
-  case *v1BetaV1.Ingress:
-    if p.KubeConfig.Namespace == "" {
-      p.KubeConfig.Namespace = o.Namespace
-    }
+	case *v1BetaV1.Ingress:
+		log.Print("Resource type: Ingress")
 
-    log.Print("Resource type: Ingress")
-    err = ApplyIngress(clientset, p.KubeConfig.Namespace, o)
+		err = ApplyIngress(clientset, p.KubeConfig.Namespace, o)
 	default:
 		err = errors.New("⛔️ This plugin doesn't support that resource type")
 		err = errors.New(fmt.Sprintf("resource type: %v", reflect.TypeOf(kubernetesObject)))
 		return err
 	}
 	return err
+}
+
+func getStructFieldStringValueOrDefault(i interface{}, fieldName string, defValue string) string {
+	f := reflect.ValueOf(i).Elem().FieldByName(fieldName)
+	if f.IsValid() {
+		v := reflect.Indirect(f)
+		if v.Kind() == reflect.String {
+			return v.String()
+		}
+	}
+	return defValue
 }
